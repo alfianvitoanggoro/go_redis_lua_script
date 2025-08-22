@@ -1,0 +1,30 @@
+# Config file for air (hot reload)
+
+# Working directory
+root = "."
+tmp_dir = "bin"
+
+# Build settings
+[build]
+  cmd = "go build -buildvcs=false -o ./bin/grls ./cmd/server"
+  bin = "bin/grls"
+  full_bin = "./bin/grls"
+  include_ext = ["go"]
+  exclude_dir = ["deploy", "bin"]
+  exclude_file = []
+  follow_symlink = true
+  delay = 1000
+
+# Log settings
+[log]
+  level = "debug"
+
+# Command settings
+[cmd]
+  after_build = "chmod +x ./bin/grls && echo '✅ Build completed!'"
+
+# Watch settings
+[watch]
+  include_dir = ["."]
+  exclude_dir = ["deploy", "bin"]
+  poll_interval = 1000

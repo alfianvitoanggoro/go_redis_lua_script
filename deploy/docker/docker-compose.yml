@@ -1,0 +1,54 @@
+services:
+  app:
+    container_name: grls-app
+    build:
+      context: ../../
+      dockerfile: deploy/docker/Dockerfile
+      target: development
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    volumes:
+      - ../../:/app
+    working_dir: /app
+    env_file:
+      - ../../.env
+    depends_on:
+      - postgres
+    networks:
+      - grls-net
+    command: air -c .air.toml
+
+  postgres:
+    container_name: grls-postgres
+    image: postgres:15
+    restart: unless-stopped
+    ports:
+      - "${DB_WRITE_PORT}:${DB_WRITE_PORT}"
+    environment:
+      POSTGRES_USER: ${DB_WRITE_USER}
+      POSTGRES_PASSWORD: ${DB_WRITE_PASSWORD}
+      POSTGRES_DB: ${DB_WRITE_NAME}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - grls-net
+
+  redis:
+    container_name: grls-redis
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+    env_file:
+      - ../../.env
+    networks:
+      - grls-net
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+
+volumes:
+  postgres-data:
+
+networks:
+  grls-net:
+    name: grls-net
+    driver: bridge
