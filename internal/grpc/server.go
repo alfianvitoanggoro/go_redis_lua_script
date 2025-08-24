@@ -27,11 +27,11 @@ func RegisterWalletService(s *grpc.Server, rds *wstore.RedisWalletStore) {
 	walletv1.RegisterWalletServiceServer(s, NewWalletServiceServer(rds))
 }
 
-// Deposit handles the gRPC Deposit request.
-// Flow: validate → Redis (Lua, atomic+idempotent) → if applied then upsert DB → respond.
+// package grpc
+
 func (s *server) Deposit(ctx context.Context, req *walletv1.DepositRequest) (*walletv1.DepositResponse, error) {
-	// ---- basic validation (mirip pola di contohmu) ----
 	if req.GetUserId() == "" || req.GetCurrency() == "" || req.GetTxId() == "" || req.GetAmount() <= 0 {
+		logger.Errorf("❌ invalid deposit request: %+v", req)
 		return &walletv1.DepositResponse{Code: -2, Applied: false}, nil
 	}
 
@@ -41,28 +41,23 @@ func (s *server) Deposit(ctx context.Context, req *walletv1.DepositRequest) (*wa
 		netw = "NATIVE"
 	}
 
-	// ---- 1) Hit Redis Lua (atomic + idempotent) ----
-	res, err := s.rds.Deposit(ctx,
-		req.GetUserId(),
-		cur,
-		req.GetTxId(),
-		req.GetAmount(),
-		mapStringToAny(req.GetMeta()),
-	)
+	// sisipkan network ke meta agar worker bisa baca
+	meta := req.GetMeta()
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	meta["network"] = netw
 
+	// Only hit Redis (atomic + idempotent)
+	res, err := s.rds.Deposit(ctx, req.GetUserId(), cur, req.GetTxId(), req.GetAmount(), mapStringToAny(meta))
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorf("❌ failed deposit %+v: %v", req, err)
 		return &walletv1.DepositResponse{Code: 0, Applied: false}, nil
 	}
 
-	// ---- 3) Sukses / idempotent ----
-	logger.WriteLogToFile("success", "WalletServer.Deposit",
-		map[string]any{"req": req, "code": res.Code, "applied": res.Applied}, nil)
-
-	return &walletv1.DepositResponse{
-		Code:    res.Code,    // 1=applied, 0=idempotent, -2 invalid
-		Applied: res.Applied, // true jika transaksi benar-benar diterapkan
-	}, nil
+	logger.Infof("✅ successful deposit %+v: %+v", req, res)
+	logger.WriteLogToFile("success", "WalletServer.Deposit", map[string]any{"req": req, "code": res.Code, "applied": res.Applied}, nil)
+	return &walletv1.DepositResponse{Code: res.Code, Applied: res.Applied}, nil
 }
 
 // helper: map[string]string → map[string]any

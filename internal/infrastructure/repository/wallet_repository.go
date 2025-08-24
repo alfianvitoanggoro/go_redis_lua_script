@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
-	"grls/pkg/logger"
 )
 
 type WalletRepository struct {
@@ -18,10 +17,10 @@ func NewWalletRepository(dbWrite *gorm.DB, dbRead *gorm.DB) *WalletRepository {
 	return &WalletRepository{dbWrite: dbWrite, dbRead: dbRead}
 }
 
-/* --- helper konversi minor→NUMERIC(20,8) --- */
+// scale minor units per currency
 var currencyScale = map[string]int{
 	"IDR": 0, "USD": 2, "SGD": 2, "EUR": 2,
-	"USDT": 6, "BTC": 8, "ETH": 8, // clamp 8 agar muat
+	"USDT": 6, "BTC": 8, "ETH": 8,
 }
 
 func minorToNumericStr(amount int64, scale int) string {
@@ -44,7 +43,7 @@ func minorToNumericStr(amount int64, scale int) string {
 	return intPart + "." + fracPart
 }
 
-/* --- UpsertDeposit: tambah balance di DB --- */
+// UpsertDeposit: INSERT ... ON CONFLICT ... balance = balance + EXCLUDED.balance
 func (r *WalletRepository) UpsertDeposit(ctx context.Context, userID int64, currency, network string, amountMinor int64) error {
 	cur := strings.ToUpper(currency)
 	if network == "" {
@@ -54,7 +53,7 @@ func (r *WalletRepository) UpsertDeposit(ctx context.Context, userID int64, curr
 	if scale > 8 {
 		scale = 8
 	}
-	amountStr := minorToNumericStr(amountMinor, scale)
+	amt := minorToNumericStr(amountMinor, scale)
 
 	sql := `
 		INSERT INTO wallets (user_id, currency, network, balance, is_active)
@@ -62,9 +61,5 @@ func (r *WalletRepository) UpsertDeposit(ctx context.Context, userID int64, curr
 		ON CONFLICT (user_id, currency, network)
 		DO UPDATE SET balance = wallets.balance + EXCLUDED.balance, updated_at = NOW()
 	`
-	if err := r.dbWrite.WithContext(ctx).Exec(sql, userID, cur, network, amountStr).Error; err != nil {
-		logger.Errorf("WalletRepository.UpsertDeposit: %v", err)
-		return err
-	}
-	return nil
+	return r.dbWrite.WithContext(ctx).Exec(sql, userID, cur, network, amt).Error
 }

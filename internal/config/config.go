@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	DB    *DBConfig
-	App   *AppConfig
-	Redis *RedisConfig
+	DB     *DBConfig
+	App    *AppConfig
+	Redis  *RedisConfig
+	Worker *WorkerConfig
 }
 
 type AppConfig struct {
@@ -60,15 +61,20 @@ type RedisConfig struct {
 	DB       string
 }
 
+type WorkerConfig struct {
+	WorkerCount int
+}
+
 func Load() *Config {
 	if err := godotenv.Load(); err != nil {
 		logger.Error("failed, No .env file found")
 	}
 
 	return &Config{
-		DB:    LoadDBConfig(),
-		App:   LoadAppConfig(),
-		Redis: LoadRedisConfig(),
+		DB:     LoadDBConfig(),
+		App:    LoadAppConfig(),
+		Redis:  LoadRedisConfig(),
+		Worker: LoadWorkerConfig(),
 	}
 }
 
@@ -121,6 +127,12 @@ func LoadRedisConfig() *RedisConfig {
 		Port:     getEnv("REDIS_PORT", "6379"),
 		Password: getEnv("REDIS_PASSWORD", "password"),
 		DB:       getEnv("REDIS_DB", "0"),
+	}
+}
+
+func LoadWorkerConfig() *WorkerConfig {
+	return &WorkerConfig{
+		WorkerCount: getEnvAsInt("WORKER_COUNT", 5),
 	}
 }
 

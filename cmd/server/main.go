@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"net"
+	"os"
 	"sync"
 	"time"
 
+	"grls/internal/app/factory"
 	"grls/internal/config"
 	"grls/internal/infrastructure/cache"
 	"grls/internal/infrastructure/db"
+	"grls/internal/infrastructure/repository"
 	"grls/internal/modules/wallet/store"
+	"grls/internal/worker"
 	"grls/pkg/graceful"
 	"grls/pkg/logger"
 
@@ -45,22 +49,30 @@ func program(state overseer.State) {
 	logger.InitLogFile(cfg.App.LogFilePath)
 
 	// --- DB connections ---
-	_, err := db.ConnectDBWrite(cfg.DB)
+	dbWrite, err := db.ConnectDBWrite(cfg.DB)
 	if err != nil {
 		logger.Fatal("❌ Failed DB write: " + err.Error())
 	}
-	_, err = db.ConnectDBRead(cfg.DB)
+
+	dbRead, err := db.ConnectDBRead(cfg.DB)
 	if err != nil {
 		logger.Fatal("❌ Failed DB read: " + err.Error())
 	}
 	logger.Infof("✅ DB connected (write=%s, read=%s)", cfg.DB.DBWrite.Name, cfg.DB.DBRead.Name)
 
-	// --- Redis / Cache ---
-	rdb, err := cache.New(ctx, *cfg.Redis)
+	// --- Redis connections ---
+	rdbAPI, err := cache.NewAPI(ctx, *cfg.Redis)
 	if err != nil {
-		logger.Fatal("❌ Failed Redis: " + err.Error())
+		logger.Fatal("❌ Redis API: " + err.Error())
 	}
-	logger.Info("✅ Redis connected")
+
+	rdbWorker, err := cache.NewWorker(ctx, *cfg.Redis, cfg.Worker.WorkerCount)
+	if err != nil {
+		logger.Fatal("❌ Redis Worker: " + err.Error())
+	}
+	logger.Infof("✅ Redis connected client and worker")
+
+	f := factory.NewFactory(dbWrite, dbRead)
 
 	var wg sync.WaitGroup
 
@@ -68,7 +80,14 @@ func program(state overseer.State) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startGRPCServer(ctx, rdb, state.Listener)
+		startGRPCServer(ctx, rdbAPI, state.Listener)
+	}()
+
+	// --- Start Redis→DB workers (multi instance) ---
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		startWorkers(ctx, rdbWorker, f.WalletRepository, cfg.Worker)
 	}()
 
 	// Block sampai ada signal cancel
@@ -76,7 +95,8 @@ func program(state overseer.State) {
 
 	db.CloseDBWrite()
 	db.CloseDBRead()
-	_ = rdb.Close()
+	_ = rdbAPI.Close()
+	_ = rdbWorker.Close()
 
 	logger.Info("🛑 Waiting for all shutdown gracefully...")
 	wg.Wait()
@@ -118,4 +138,36 @@ func startGRPCServer(ctx context.Context, rdb redis.UniversalClient, listener ne
 			logger.Error("❌ gRPC server error: " + err.Error())
 		}
 	}
+}
+
+// startWorkers: spawn beberapa consumer untuk stream:wallet (multi instance)
+func startWorkers(ctx context.Context, rdb redis.UniversalClient, repo *repository.WalletRepository, workerConfig *config.WorkerConfig) {
+	workerCount := workerConfig.WorkerCount
+	host, _ := os.Hostname()
+
+	logger.Infof("🧵 Starting %d wallet workers...", workerCount)
+
+	var wg sync.WaitGroup
+	for i := 1; i <= workerCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			consumer := worker.ConsumerName(host, i)
+			w := worker.NewWalletStreamWorker(rdb, repo, &worker.Options{
+				Stream:       "stream:wallet",
+				Group:        "wallet_cg",
+				Block:        5 * time.Second,
+				Batch:        200,
+				MinIdle:      30 * time.Second,
+				TrimAfterAck: false, // set true jika mau XDEL setelah ACK
+			})
+			logger.Infof("🧵 worker started: %s", consumer)
+			w.Run(ctx, consumer)
+			logger.Infof("🧵 worker stopped: %s", consumer)
+		}(i)
+	}
+
+	// tunggu semua worker saat ctx.Done()
+	<-ctx.Done()
+	wg.Wait()
 }
