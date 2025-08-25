@@ -8,6 +8,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/jpillora/overseer v1.1.6
 	github.com/redis/go-redis/v9 v9.12.1
+	github.com/shopspring/decimal v1.4.0
 	github.com/sirupsen/logrus v1.9.3
 	google.golang.org/grpc v1.64.0
 	google.golang.org/protobuf v1.34.1

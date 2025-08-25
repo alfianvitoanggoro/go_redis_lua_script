@@ -203,3 +203,77 @@ go-redis-lua_script
       └─ validation.go
 
 ```
+
+```
+go-redis-lua_script
+├─ .air.toml
+├─ Makefile
+├─ README.md
+├─ cmd
+│  ├─ server
+│  │  └─ main.go
+│  └─ sim_deposit
+│     └─ mian.go
+├─ deploy
+│  ├─ docker
+│  │  ├─ Dockerfile
+│  │  └─ docker-compose.yml
+│  └─ k8s
+│     └─ Dockerfile
+├─ go.mod
+├─ go.sum
+├─ internal
+│  ├─ app
+│  │  └─ factory
+│  │     └─ factory.go
+│  ├─ config
+│  │  └─ config.go
+│  ├─ dto
+│  │  └─ request.go
+│  ├─ grpc
+│  │  └─ server.go
+│  ├─ infrastructure
+│  │  ├─ cache
+│  │  │  └─ cache.go
+│  │  ├─ db
+│  │  │  └─ db.go
+│  │  └─ repository
+│  │     └─ wallet_repository.go
+│  ├─ model
+│  │  └─ wallet_model.go
+│  └─ store
+│     ├─ fifo_lock.go
+│     ├─ lua
+│     │  ├─ deposit.lua
+│     │  ├─ enqueue_and_try_acquire.lua
+│     │  ├─ force_release.lua
+│     │  ├─ release_and_promote.lua
+│     │  └─ try_promote_if_head.lua
+│     └─ redis_store.go
+├─ k6
+│  ├─ deposit_param_test.js
+│  └─ deposit_param_test_2.js
+├─ migration
+│  ├─ 000001_create_wallets_table.down.sql
+│  └─ 000001_create_wallets_table.up.sql
+└─ pkg
+   ├─ graceful
+   │  └─ graceful.go
+   ├─ helper
+   │  └─ helper.go
+   ├─ logger
+   │  ├─ logfile.go
+   │  └─ logger.go
+   ├─ proto
+   │  └─ wallet
+   │     └─ v1
+   │        ├─ wallet.pb.go
+   │        ├─ wallet.proto
+   │        └─ wallet_grpc.pb.go
+   ├─ response
+   │  └─ response.go
+   └─ validation
+      ├─ default_rule.go
+      └─ validation.go
+
+```

@@ -2,21 +2,25 @@ syntax = "proto3";
 
 package wallet.v1;
 
-// Ganti "grls" jika module path kamu beda
 option go_package = "grls/pkg/proto/wallet/v1;walletv1";
 
 message DepositRequest {
   string user_id  = 1;  // BIGINT as string
   string currency = 2;  // IDR/USDT/...
-  string network  = 3;  // NATIVE/ERC20/TRC20 (optional)
-  string tx_id    = 4;  // idempotency key (dipakai saat Redis siap)
-  int64  amount   = 5;  // minor units (integer)
+  string network  = 3;  // optional; diabaikan kalau kamu sudah drop
+  string tx_id    = 4;  // request id (dipakai FIFO)
+  int64  amount   = 5;  // integer as-is (uji coba)
   map<string, string> meta = 6; // optional
 }
 
 message DepositResponse {
-  int64 code   = 1;  // 1=applied, 0=idempotent (future via Redis), -2 invalid
-  bool  applied = 2;
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    SUCCESS = 1;
+    FAILED  = 2;
+  }
+  Status status = 1;   // SUCCESS atau FAILED
+  string message = 2;  // penjelasan singkat
 }
 
 service WalletService {

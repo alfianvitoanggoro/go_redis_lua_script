@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"strconv"
 	"time"
 
@@ -12,88 +11,51 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// NewAPI: client untuk jalur sinkron (gRPC → Lua/EVAL)
-func NewAPI(ctx context.Context, cfg config.RedisConfig) (redis.UniversalClient, error) {
+func ConnectRedis(ctx context.Context, cfg config.RedisConfig) (redis.UniversalClient, error) {
 	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
-	dbIndex, _ := strconv.Atoi(cfg.DB)
 
-	// Pool sizing: sesuaikan beban (mis. 500 VU → mulai 300)
-	poolSize := 300
-	minIdle := 100
+	dbIndex, err := strconv.Atoi(cfg.DB)
+	if err != nil {
+		dbIndex = 0
+	}
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: cfg.Password,
-		DB:       dbIndex,
-
-		// Timeouts (sinkron path cepat)
-		DialTimeout:  1 * time.Second,
-		ReadTimeout:  400 * time.Millisecond,
-		WriteTimeout: 400 * time.Millisecond,
-
-		// Pooling
-		PoolSize:     poolSize,
-		MinIdleConns: minIdle,
-		PoolTimeout:  300 * time.Millisecond,
-
-		// v9 pengganti IdleTimeout
+	opts := &redis.Options{
+		Addr:            addr,
+		Password:        cfg.Password,
+		DB:              dbIndex,
+		DialTimeout:     1 * time.Second,
+		ReadTimeout:     400 * time.Millisecond,
+		WriteTimeout:    400 * time.Millisecond,
+		PoolSize:        300,
+		MinIdleConns:    100,
+		PoolTimeout:     750 * time.Millisecond,
 		ConnMaxIdleTime: 90 * time.Second,
 		ConnMaxLifetime: 0,
-
-		// Kurangi tail latency pada high contention
-		PoolFIFO: true,
-
-		// Retry kecil saja (hindari retry panjang di hot path)
-		MaxRetries:      1,
+		PoolFIFO:        true,
+		MaxRetries:      0,
 		MinRetryBackoff: 50 * time.Millisecond,
 		MaxRetryBackoff: 200 * time.Millisecond,
-	})
 
+		OnConnect: func(ctx context.Context, cn *redis.Conn) error {
+			// Biar gampang di-trace di Redis: CLIENT LIST/INFO
+			_ = cn.ClientSetName(ctx, "grls").Err()
+			return nil
+		},
+	}
+
+	rdb := redis.NewClient(opts)
+
+	// health check
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		_ = rdb.Close()
 		return nil, err
 	}
-	return rdb, nil
-}
 
-// NewWorker: client khusus worker (XREADGROUP blocking)
-func NewWorker(ctx context.Context, cfg config.RedisConfig, workerCount int) (redis.UniversalClient, error) {
-	addr := fmt.Sprintf("%s:%s", cfg.Host, cfg.Port)
-	dbIndex, _ := strconv.Atoi(cfg.DB)
-
-	if workerCount <= 0 {
-		workerCount = runtime.NumCPU()
+	// pre-warm pool (best effort)
+	warm := min(opts.MinIdleConns, 64)
+	for i := 0; i < warm; i++ {
+		go func() { _ = rdb.Ping(ctx).Err() }()
 	}
-	// 1 koneksi blocking per worker + ekstra untuk ack/xclaim, dll.
-	poolSize := workerCount + 64
-	minIdle := workerCount
 
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: cfg.Password,
-		DB:       dbIndex,
-
-		// IMPORTANT: ReadTimeout harus >= Block (atau 0 = no timeout) untuk XREADGROUP
-		DialTimeout: 1 * time.Second,
-		ReadTimeout: 0, // no timeout: cocok untuk XREADGROUP Block N detik
-		// Write untuk ACK/XCLAIM tetap singkat
-		WriteTimeout: 1 * time.Second,
-
-		PoolSize:        poolSize,
-		MinIdleConns:    minIdle,
-		PoolTimeout:     2 * time.Second,
-		ConnMaxIdleTime: 120 * time.Second,
-		ConnMaxLifetime: 0,
-		PoolFIFO:        true,
-
-		MaxRetries:      1,
-		MinRetryBackoff: 100 * time.Millisecond,
-		MaxRetryBackoff: 500 * time.Millisecond,
-	})
-
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		_ = rdb.Close()
-		return nil, err
-	}
 	return rdb, nil
 }
