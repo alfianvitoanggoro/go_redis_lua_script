@@ -23,7 +23,6 @@ export const options = {
       duration: DURATION,
       preAllocatedVUs: PRE_VUS,
       maxVUs: MAX_VUS,
-      gracefulStop: "0s",
     },
   },
   thresholds: {

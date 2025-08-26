@@ -5,14 +5,14 @@ import (
 	"context"
 	"net"
 	"sync"
-	"time"
 
+	"grls/internal/async" // <-- goroutine processor FIFO
 	"grls/internal/config"
 	grpcserver "grls/internal/grpc"
 	"grls/internal/infrastructure/cache"
 	"grls/internal/infrastructure/db"
 	"grls/internal/infrastructure/repository"
-	"grls/internal/store"
+	"grls/internal/store" // <-- RedisQueue (Lua enqueue/release)
 	"grls/pkg/graceful"
 	"grls/pkg/logger"
 
@@ -55,7 +55,7 @@ func program(state overseer.State) {
 	}
 	logger.Infof("✅ DB connected (write=%s, read=%s)", cfg.DB.DBWrite.Name, cfg.DB.DBRead.Name)
 
-	// --- Redis connection (API path) ---
+	// --- Redis connection ---
 	rdb, err := cache.ConnectRedis(ctx, *cfg.Redis)
 	if err != nil {
 		logger.Fatal("❌ Redis connect: " + err.Error())
@@ -64,13 +64,18 @@ func program(state overseer.State) {
 
 	// --- Dependencies ---
 	repo := repository.NewWalletRepository(dbWrite, dbRead)
-	fifo := store.NewFIFOLock(rdb, 2*time.Minute) // TTL lease owner (aman no-loss)
+	queue := store.NewRedisQueue(rdb) // pakai Lua enqueue/release
 
+	// --- Start async processor (BRPOP ready:wallet -> DB -> release) ---
+	proc := async.NewProcessor(rdb, repo, queue)
+	go proc.Run(ctx)
+
+	// --- Start gRPC server ---
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startGRPCServer(ctx, repo, fifo, state.Listener)
+		startGRPCServer(ctx, queue, state.Listener)
 	}()
 
 	// Block sampai ada signal cancel
@@ -88,16 +93,15 @@ func program(state overseer.State) {
 
 // startGRPCServer menjalankan gRPC di listener yang diberikan, lengkap dengan health & reflection.
 // Berhenti gracefully saat ctx.Done().
-func startGRPCServer(ctx context.Context, repo *repository.WalletRepository, fifo *store.FIFOLock, listener net.Listener) {
+func startGRPCServer(ctx context.Context, queue *store.RedisQueue, listener net.Listener) {
 	s := grpc.NewServer()
 
-	// register wallet service (repo + fifo)
-	grpcserver.RegisterWalletService(s, repo, fifo)
+	// Register wallet service (enqueue-only)
+	grpcserver.RegisterWalletService(s, queue)
 
 	// Health service
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
-	// set juga nama service sesuai proto
 	healthServer.SetServingStatus("wallet.v1.WalletService", healthgrpc.HealthCheckResponse_SERVING)
 	healthgrpc.RegisterHealthServer(s, healthServer)
 

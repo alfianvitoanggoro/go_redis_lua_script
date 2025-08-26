@@ -1,22 +1,24 @@
 -- KEYS[1] = q:{user}
--- KEYS[2] = own:{user}
--- ARGV[1] = req_id
--- ARGV[2] = ttl_ms
+-- KEYS[2] = lock:{user}
+-- KEYS[3] = ready:wallet
+-- ARGV[1] = payload JSON (user_id, currency, amount, tx_id)
 
-local q   = KEYS[1]
-local own = KEYS[2]
-local req = ARGV[1]
-local ttl = tonumber(ARGV[2])
+local q     = KEYS[1]
+local lock  = KEYS[2]
+local ready = KEYS[3]
+local payload = ARGV[1]
 
--- idempotent enqueue: hanya push kalau belum ada
-if redis.call('LPOS', q, req) == false then
-  redis.call('RPUSH', q, req)
+-- Enqueue payload ke antrian user
+redis.call('RPUSH', q, payload)
+
+-- Jika belum ada lock dan head ada → acquire + tandai siap diproses
+if redis.call('EXISTS', lock) == 0 then
+  local head = redis.call('LINDEX', q, 0)
+  if head ~= false then
+    redis.call('SET', lock, '1')
+    redis.call('LPUSH', ready, q)  -- dorong queue user ke daftar 'ready'
+    return 1
+  end
 end
 
--- jika head dan belum ada owner, ambil giliran
-local head = redis.call('LINDEX', q, 0)
-if head == req and (redis.call('EXISTS', own) == 0) then
-  redis.call('SET', own, req, 'PX', ttl)
-  return {1, 'acquired'}
-end
-return {0, 'queued'}
+return 0

@@ -1,28 +1,26 @@
 -- KEYS[1] = q:{user}
--- KEYS[2] = own:{user}
--- ARGV[1] = req_id
--- ARGV[2] = ttl_ms
+-- KEYS[2] = lock:{user}
+-- KEYS[3] = ready:wallet
 
-local q   = KEYS[1]
-local own = KEYS[2]
-local req = ARGV[1]
-local ttl = tonumber(ARGV[2])
+local q     = KEYS[1]
+local lock  = KEYS[2]
+local ready = KEYS[3]
 
--- hanya head yang boleh melepas
-local head = redis.call('LINDEX', q, 0)
-if head ~= req then
-  return {0, 'not_head'}
+-- Harus ada lock (kalau tidak, biarkan aplikasi yang repair)
+if redis.call('EXISTS', lock) == 0 then
+  return -1
 end
 
--- keluarkan dirinya dari antrian
+-- Buang head item yang barusan diproses
 redis.call('LPOP', q)
 
--- promosikan next (jika ada)
-local next = redis.call('LINDEX', q, 0)
-if next then
-  redis.call('SET', own, next, 'PX', ttl)
+local llen = redis.call('LLEN', q)
+if llen > 0 then
+  -- Masih ada antrian: tetap locked & tandai siap lagi
+  redis.call('LPUSH', ready, q)
+  return 1
 else
-  redis.call('DEL', own)
+  -- Habis: buka lock
+  redis.call('DEL', lock)
+  return 0
 end
-
-return {1, 'released'}
